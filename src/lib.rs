@@ -10,6 +10,26 @@ const GFX_SIZE: usize = 64 * 32;
 
 const FLAG_REG: usize = 15; // 0x0f
 
+const CHIP8_FONTSET: [u8; 80] = [
+  0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+  0x20, 0x60, 0x20, 0x20, 0x70, // 1
+  0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+  0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+  0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+  0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+  0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+  0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+  0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+  0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+  0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+  0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+  0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+  0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+  0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+  0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+];
+
+
 type RegId = usize;
 type Addr = usize;
 
@@ -25,7 +45,7 @@ impl Cpu {
         return Cpu {
             regs: vec![0; 16],
             i: 0,
-            pc: 0,
+            pc: PROG_OFFSET,
             sp: INT_OFFSET,
         };
     }
@@ -83,7 +103,7 @@ pub struct Chip8 {
 
 impl Chip8 {
     pub fn new() -> Self {
-        Chip8 {
+        let mut comp = Chip8 {
             cpu: Cpu::new(),
             mem: vec![0; MEM_SIZE],
             gfx: vec![0; GFX_SIZE],
@@ -92,7 +112,14 @@ impl Chip8 {
             sound_timer: 0,
             draw: false,
             rng: rand::thread_rng()
-        }
+        };
+
+        // for i in 0..FONT_OFFSET {
+        // }
+
+        comp.mem.copy_from_slice(&CHIP8_FONTSET);
+
+        comp
     }
 
     pub fn step(&mut self) -> Result<(), usize> {
@@ -116,16 +143,19 @@ impl Chip8 {
             DispClear => todo!("emit display clear"),
             Ret => {
                 // TODO get both bytes
-                next_pc = self.mem[self.cpu.sp] as usize;
+                next_pc = self.mem[self.cpu.sp] as Addr;
                 // TODO handle bot of stack correctly
                 self.cpu.sp -= 2;
             },
             Jmp(addr) => {
-                next_pc = addr as usize;
+                next_pc = addr as Addr;
             },
             CallAt(addr) => {
                 // TODO this should probably push ret addr
-                next_pc = self.mem[addr] as usize | (self.mem[addr + 1] as usize) << 8;
+                self.mem[self.cpu.sp] = (next_pc & 0xf) as u8;
+                self.mem[self.cpu.sp + 1] = ((next_pc >> 8) & 0xf) as u8;
+                self.cpu.sp += 2;
+                next_pc = self.mem[addr] as Addr | (self.mem[addr + 1] as Addr) << 8;
             },
             ImEq(reg, val) => {
                 skip = self.cpu.regs[reg] == val;
@@ -210,7 +240,7 @@ impl Chip8 {
                 todo!("opcode KeyWait()")
             },
             IncIndex(vx) => {
-                self.cpu.i += self.cpu.regs[vx] as usize;
+                self.cpu.i += self.cpu.regs[vx] as Addr;
             },
             SpriteAddr(vx) => {
                 todo!("opcode SpriteAddr()")
@@ -219,8 +249,14 @@ impl Chip8 {
                 todo!("opcode BCD()")
             },
             RegDump(vx) => {
+                for x in 0..=vx {
+                    self.mem[self.cpu.i + x] = self.cpu.regs[vx];
+                }
             },
             RegLoad(vx) => {
+                for x in 0..=vx {
+                   self.cpu.regs[vx] = self.mem[self.cpu.i + x]
+                }
             }
             Invalid => {
                 todo!("opcode Invalid() handle it properly")
