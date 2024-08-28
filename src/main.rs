@@ -1,6 +1,8 @@
-use sdl2::pixels::Color;
+use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
+use sdl2::render::Texture;
+use sdl2::surface::Surface;
 use chip8::Chip8;
 
 
@@ -18,6 +20,9 @@ fn main() {
     canvas.clear();
     canvas.present();
     let mut event_pump = sdl_context.event_pump().unwrap();
+    let surface = Surface::new(400, 200, PixelFormatEnum::RGB24).unwrap();
+    let creator = canvas.texture_creator();
+    let tex = Texture::from_surface(&surface, &creator);
 
     let mut comp = Chip8::new().with_mode(chip8::StepMode::Debug);
     let prog = std::fs::read("./roms/pong2.c8").unwrap();
@@ -45,7 +50,7 @@ fn main() {
                 Event::KeyDown { keycode: Some(Keycode::Escape), .. } => {
                     break 'render;
                 }
-                Event::KeyDown { keycode: Some(key), .. } => {
+                Event::KeyDown { keycode: Some(key), repeat: false, .. } => {
                     let key = match key {
                         Keycode::Num1 => 0x1,
                         Keycode::Num2 => 0x2,
@@ -70,6 +75,7 @@ fn main() {
                     };
 
 
+                    // Todo dont like this
                     if key <= 15 {
                         comp.key_down(key);
                     }
