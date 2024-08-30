@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use rand::rngs::ThreadRng;
 use rand::Rng;
 
@@ -53,11 +55,11 @@ impl Cpu {
 
 #[derive(Debug)]
 enum OpCode {
-    Call(Addr),             // 0NNN
+    NativeCall(Addr),       // 0NNN
     DispClear,              // 00E0
     Ret,                    // 00EE
     Jmp(Addr),              // 1NNN
-    CallAt(Addr),           // 2NNN
+    Call(Addr),             // 2NNN
     ImEq(RegId, u8),        // 3XNN
     ImNeq(RegId, u8),       // 4XNN
     RREq(RegId, RegId),     // 5XY0
@@ -69,9 +71,9 @@ enum OpCode {
     RRXor(RegId, RegId),    // 8XY3
     RRAdd(RegId, RegId),    // 8XY4
     RRSub(RegId, RegId),    // 8XY5
-    RRShr(RegId, RegId),    // 8XY6
+    RRShr(RegId),           // 8XY6
     RRSub2(RegId, RegId),   // 8XY7
-    RRShl(RegId, RegId),    // 8XYE
+    RRShl(RegId),           // 8XYE
     RRNeq(RegId, RegId),    // 9XY0
     Index(Addr),            // ANNN
     JmpAdd(Addr),           // BNNN
@@ -88,7 +90,53 @@ enum OpCode {
     BCD(RegId),             // FX33
     RegDump(RegId),         // FX55
     RegLoad(RegId),         // FX65
+    Halt,                   // FFFF
     Invalid,
+}
+
+impl Display for OpCode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        use OpCode::*;
+        match self {
+            NativeCall(addr) => write!(f, "NativeCall@x{addr:04x}"),
+            DispClear => write!(f, "DispClear"),
+            Ret => write!(f, "Ret"),
+            Jmp(addr) => write!(f, "Jmp@x{addr:04x}"),
+            Call(addr) => write!(f, "Call@x{addr:04x}"),
+            ImEq(vx, vi) => write!(f, "ImEq v{vx:X},{vi:02x}"),
+            ImNeq(vx, vi) => write!(f, "ImNeq v{vx:X},{vi:02x}"),
+            RREq(vx, vy) => write!(f, "RREq v{vx:X},v{vy:X}"),
+            IRMov(vx, vi) => write!(f, "IRMov v{vx:X},{vi:02x}"),
+            IRAdd(vx, vi) => write!(f, "IRAdd v{vx:X},{vi:02x}"),
+            RRMov(vx, vy) => write!(f, "RRMov v{vx:X},v{vy:X}"),
+            RROr(vx, vy) => write!(f, "RROr v{vx:X},v{vy:X}"),
+            RRAnd(vx, vy) => write!(f, "RRAnd v{vx:X},v{vy:X}"),
+            RRXor(vx, vy) => write!(f, "RRXor v{vx:X},v{vy:X}"),
+            RRAdd(vx, vy) => write!(f, "RRAdd v{vx:X},v{vy:X}"),
+            RRSub(vx, vy) => write!(f, "RRSub v{vx:X},v{vy:X}"),
+            RRShr(vx) => write!(f, "RRShr v{vx:X}"),
+            RRSub2(vx, vy) => write!(f, "RRSub2 v{vx:X},v{vy:X}"),
+            RRShl(vx) => write!(f, "RRShl v{vx:X}"),
+            RRNeq(vx, vy) => write!(f, "RRNeq v{vx:X},v{vy:X}"),
+            Index(addr) => write!(f, "Index@x{addr:04x}"),
+            JmpAdd(addr) => write!(f, "JmpAdd@x{addr:04x}"),
+            Rand(vx, vi) => write!(f, "Rand v{vx:X},{vi:02x}"),
+            Draw(vx, vy, n) => write!(f, "Draw v{vx:X},v{vy:X},{n}"),
+            KeyEq(vx) => write!(f, "KeyEq v{vx:X}"),
+            KeyNeq(vx) => write!(f, "KeyNeq v{vx:X}"),
+            DelayGet(vx) => write!(f, "DelayGet v{vx:X}"),
+            KeyWait(vx) => write!(f, "KeyWait v{vx:X}"),
+            DelaySet(vx) => write!(f, "DelaySet v{vx:X}"),
+            SoundSet(vx) => write!(f, "SoundSet v{vx:X}"),
+            IncIndex(vx) => write!(f, "IncIndex v{vx:X}"),
+            SpriteAddr(vx) => write!(f, "SpriteAddr v{vx:X}"),
+            BCD(vx) => write!(f, "BCD v{vx:X}"),
+            RegDump(vx) => write!(f, "RegDump v{vx:X}"),
+            RegLoad(vx) => write!(f, "RegLoad v{vx:X}"),
+            Halt => write!(f, "Halt"),
+            Invalid => write!(f, "Invalid"),
+        }
+    }
 }
 
 #[derive(PartialEq)]
@@ -102,11 +150,13 @@ pub struct Chip8 {
     mem: Vec<u8>,
     pub gfx: Vec<u8>,
     keys: u16,
+    pub cycles: u32,
     delay_timer: u8,
     sound_timer: u8,
     pub draw: bool,
     pub step_mode: StepMode,
     rng: ThreadRng,
+    pub running: bool,
 }
 
 impl Chip8 {
@@ -116,11 +166,13 @@ impl Chip8 {
             mem: vec![0; MEM_SIZE],
             gfx: vec![0; GFX_SIZE],
             keys: 0,
+            cycles: 0,
             delay_timer: 0,
             sound_timer: 0,
             draw: true,
             step_mode: StepMode::Cycle,
             rng: rand::thread_rng(),
+            running: true,
         };
 
         comp.mem[0..80].copy_from_slice(&CHIP8_FONTSET);
@@ -133,10 +185,13 @@ impl Chip8 {
         self
     }
 
-    // TODO: create real errors
-    pub fn load(&mut self, prog: &[u8]) -> Result<(), usize> {
+    pub fn load(&mut self, prog: &[u8]) -> Result<(), String> {
         if prog.len() >= INT_OFFSET - PROG_OFFSET {
-            return Err(2);
+            return Err(format!(
+                "Program len({}) exceeds memory len({})",
+                prog.len(),
+                INT_OFFSET - PROG_OFFSET
+            ));
         }
 
         self.mem[PROG_OFFSET..PROG_OFFSET + prog.len()].copy_from_slice(prog);
@@ -144,19 +199,27 @@ impl Chip8 {
         Ok(())
     }
 
-    pub fn step(&mut self) -> Result<(), usize> {
+    pub fn step(&mut self) -> Result<(), String> {
         let pc = self.cpu.pc;
         let opcode_num = match (self.mem.get(pc), self.mem.get(pc + 1)) {
             (Some(a), Some(b)) => (*a as u16) << 8 | *b as u16,
-            _ => return Err(1),
+            _ => return Err(format!("An opcode byte was None at 0x{:04x}", pc)),
         };
 
         let opcode = self.decode(opcode_num);
         let mut skip = false;
         let mut next_pc = pc + 2;
         use OpCode::*;
+
+        if self.step_mode == StepMode::Debug {
+            // println!("{:?}", self.cpu);
+            println!("pc: 0x{:04x}", pc);
+            println!("opcode: 0x{:04x} ({})", opcode_num, opcode);
+            println!("cycles: 0x{:08x}", self.cycles);
+            // println!("keys: 0x{:04x}", self.keys);
+        }
         match opcode {
-            Call(addr) => {
+            NativeCall(addr) => {
                 self.mem[self.cpu.sp] = (next_pc & 0xf) as u8;
                 self.mem[self.cpu.sp + 1] = ((next_pc >> 8) & 0xf) as u8;
                 self.cpu.sp += 2;
@@ -169,7 +232,6 @@ impl Chip8 {
                 self.draw = true;
             }
             Ret => {
-                // TODO get both bytes
                 self.cpu.sp -= 2;
                 next_pc = self.mem[self.cpu.sp] as Addr;
                 next_pc = next_pc << 8 | self.mem[self.cpu.sp + 1] as Addr;
@@ -177,10 +239,12 @@ impl Chip8 {
             Jmp(addr) => {
                 next_pc = addr as Addr;
             }
-            CallAt(addr) => {
+            Call(addr) => {
                 self.mem[self.cpu.sp] = (next_pc >> 8) as u8;
                 self.mem[self.cpu.sp + 1] = (next_pc & 0xf) as u8;
                 self.cpu.sp += 2;
+                // next_pc = (self.mem[addr + 1] as Addr) << 8 | self.mem[addr] as Addr;
+                // next_pc = (self.mem[addr] as Addr) << 8 | (self.mem[addr + 1] as Addr)
                 next_pc = addr;
             }
             ImEq(reg, val) => {
@@ -200,8 +264,8 @@ impl Chip8 {
             }
             // does not update carry
             IRAdd(reg, val) => {
-                // TODO overflow?
-                self.cpu.regs[reg] += val;
+                let (res, _) = self.cpu.regs[reg].overflowing_add(val);
+                self.cpu.regs[reg] = res;
             }
             RRMov(ra, rb) => {
                 self.cpu.regs[ra] = self.cpu.regs[rb];
@@ -224,12 +288,12 @@ impl Chip8 {
                 self.cpu.regs[FLAG_REG] = if of { 0 } else { 1 };
                 self.cpu.regs[ra] = res;
             }
-            RRShr(ra, _) => {
+            RRShr(ra) => {
                 let ra_val = self.cpu.regs[ra];
                 self.cpu.regs[FLAG_REG] = ra_val & 0x1;
                 self.cpu.regs[ra] = ra_val >> 1;
             }
-            RRShl(ra, _) => {
+            RRShl(ra) => {
                 let ra_val = self.cpu.regs[ra];
                 self.cpu.regs[FLAG_REG] = (ra_val & 0x80) >> 7;
                 self.cpu.regs[ra] = ra_val << 1;
@@ -246,19 +310,6 @@ impl Chip8 {
             }
             Draw(vx, vy, n) => {
                 self.cpu.regs[0xf] = 0;
-
-                /*
-                for (int yline = 0; yline < height; yline++) {
-                  pixel = memory[I + yline];
-                  for(int xline = 0; xline < 8; xline++) {
-                    if((pixel & (0x80 >> xline)) != 0) {
-                      if(gfx[(x + xline + ((y + yline) * 64))] == 1)
-                        V[0xF] = 1;
-                      gfx[x + xline + ((y + yline) * 64)] ^= 1;
-                    }
-                  }
-                }
-                */
                 let vx = self.cpu.regs[vx] as usize;
                 let vy = self.cpu.regs[vy] as usize;
                 let n = n as usize;
@@ -293,7 +344,18 @@ impl Chip8 {
                 self.sound_timer = self.cpu.regs[vx];
             }
             KeyWait(vx) => {
-                todo!("opcode KeyWait()")
+                let mut got_key = false;
+                for i in 0..16 {
+                    if (self.keys & (1 << i)) > 0 {
+                        self.cpu.regs[vx] = i;
+                        got_key = true;
+                        break;
+                    }
+                }
+
+                if !got_key {
+                    next_pc = pc;
+                }
             }
             IncIndex(vx) => {
                 self.cpu.i += self.cpu.regs[vx] as Addr;
@@ -315,16 +377,20 @@ impl Chip8 {
                 for x in 0..=vx {
                     self.mem[self.cpu.i + x] = self.cpu.regs[vx];
                 }
+                self.cpu.i += vx + 1;
             }
             RegLoad(vx) => {
                 for x in 0..=vx {
                     self.cpu.regs[vx] = self.mem[self.cpu.i + x]
                 }
+                self.cpu.i += vx + 1;
             }
+            Halt => self.running = false,
             Invalid => {
-                println!("INVALID OPCODE:");
-                println!("op: 0x{:04x} at pc: 0x{:04x}", opcode_num, pc);
-                return Err(4);
+                return Err(format!(
+                    "Invalid opcode: 0x{:04x} at pc: 0x{:04x}",
+                    opcode_num, pc
+                ));
             }
         }
 
@@ -332,7 +398,12 @@ impl Chip8 {
             next_pc += 2;
         }
 
+        if self.step_mode == StepMode::Debug {
+            println!("next_pc: {:04x}\n", next_pc);
+        }
+
         self.cpu.pc = next_pc;
+        self.cycles += 1;
 
         if self.delay_timer > 0 {
             self.delay_timer -= 1;
@@ -340,7 +411,7 @@ impl Chip8 {
 
         if self.sound_timer > 0 {
             if self.sound_timer == 1 {
-                println!("BEEP");
+                println!("TODO: BEEP");
             }
 
             self.sound_timer -= 1;
@@ -361,10 +432,10 @@ impl Chip8 {
             0x0 => match vi {
                 0xee => Ret,
                 0xe0 => DispClear,
-                _ => Call(addr),
+                _ => NativeCall(addr),
             },
             0x1 => Jmp(addr),
-            0x2 => CallAt(addr),
+            0x2 => Call(addr),
             0x3 => ImEq(vx, vi),
             0x4 => ImNeq(vx, vi),
             0x5 => RREq(vx, vy), // note: ifun ??
@@ -377,9 +448,9 @@ impl Chip8 {
                 0x3 => RRXor(vx, vy),
                 0x4 => RRAdd(vx, vy),
                 0x5 => RRSub(vx, vy),
-                0x6 => RRShr(vx, vy),
+                0x6 => RRShr(vx),
                 0x7 => RRSub2(vx, vy),
-                0xe => RRShl(vx, vy),
+                0xe => RRShl(vx),
                 _ => Invalid,
             },
             0x9 => RRNeq(vx, vy),
@@ -402,6 +473,7 @@ impl Chip8 {
                 0x33 => BCD(vx),
                 0x55 => RegDump(vx),
                 0x65 => RegLoad(vx),
+                0xff => Halt,
                 _ => Invalid,
             },
             _ => Invalid,

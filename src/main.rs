@@ -1,17 +1,63 @@
 use std::time::Duration;
 
-use chip8::Chip8;
+use chip8::{Chip8, StepMode};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::{Color, PixelFormatEnum};
 use sdl2::rect::Rect;
 
+struct Opts {
+    mode: StepMode,
+    file: String,
+    cycle_speed: u32,
+}
+
+fn parse_cl() -> Result<Opts, String> {
+    let args: Vec<String> = std::env::args().collect();
+    let mode = match args.iter().position(|e| e == "-m" || e == "--mode") {
+        Some(idx) => match args.get(idx + 1) {
+            Some(val) => match val.as_str() {
+                "d" | "debug" => StepMode::Debug,
+                "c" | "cycle" | _ => StepMode::Cycle,
+            },
+            None => StepMode::Cycle,
+        },
+        None => StepMode::Cycle,
+    };
+
+    let file = match args.iter().position(|e| e == "-f" || e == "--file") {
+        Some(idx) => match args.get(idx + 1) {
+            Some(val) => val,
+            None => return Err("Found --file option, but no file name".into()),
+        },
+        None => return Err("Missing required option filename".into()),
+    };
+
+    let cycle_speed = match args.iter().position(|e| e == "-t" || e == "--time") {
+        Some(idx) => match args.get(idx + 1) {
+            Some(val) => val.parse::<u32>().map_err(|e| e.to_string())?,
+            None => return Err("Found --time option, but no time value".into()),
+        },
+        None => 0,
+    };
+
+    let file = file.to_owned();
+    Ok(Opts {
+        mode,
+        file,
+        cycle_speed,
+    })
+}
+
 fn main() -> Result<(), String> {
     // init gfx and key read contexts
+
+    let opts = parse_cl()?;
+
     let win_width = 1024;
     let win_height = 512;
-    let sdl_context = sdl2::init().unwrap();
-    let video_context = sdl_context.video().unwrap();
+    let sdl_context = sdl2::init()?;
+    let video_context = sdl_context.video()?;
     let window = video_context
         .window("chip8", win_width, win_height)
         .position_centered()
@@ -50,27 +96,25 @@ fn main() -> Result<(), String> {
         }
     })?;
 
-    let mut render_rect = Rect::new(1,1, tex_w as u32, tex_h as u32);
+    let mut render_rect = Rect::new(1, 1, tex_w as u32, tex_h as u32);
     canvas.set_draw_color(Color::RGB(0, 0, 0));
-    canvas.clear();
     canvas.present();
 
-    let mut comp = Chip8::new().with_mode(chip8::StepMode::Debug);
-    let prog = std::fs::read("./roms/invaders.c8").unwrap();
-    comp.load(&prog).unwrap();
-    let mut cc = 0;
-    let mut event_pump = sdl_context.event_pump().unwrap();
-    'render: loop {
+    let mut comp = Chip8::new().with_mode(opts.mode);
+    let prog = std::fs::read(opts.file).map_err(|e| e.to_string())?;
+    comp.load(&prog)?;
+
+    let mut event_pump = sdl_context.event_pump()?;
+    let mut user_break = false;
+    'render: while comp.running {
         match comp.step() {
             Ok(_) => {}
             Err(e) => {
-                panic!("emu step fail: {} on cc {}", e, cc + 1);
+                return Err(format!("emu step fail: {} on cc {}", e, comp.cycles));
             }
         }
-        cc += 1;
 
         if comp.draw {
-            canvas.clear();
             for i in 0..comp.gfx.len() {
                 let y = (i / 64) * tex_h as usize;
                 let x = (i % 64) * tex_w as usize;
@@ -79,12 +123,11 @@ fn main() -> Result<(), String> {
                 render_rect.set_y(y as i32);
 
                 if comp.gfx[i] == 1 {
-                    canvas.copy(&white, None, Some(render_rect)).expect("render err: ");
+                    canvas.copy(&white, None, Some(render_rect))?;
                 } else {
-                    canvas.copy(&black, None, Some(render_rect)).expect("render err: ");
+                    canvas.copy(&black, None, Some(render_rect))?
                 }
             }
-            debug_render(&comp.gfx);
             comp.draw = false;
             canvas.present();
         }
@@ -96,6 +139,7 @@ fn main() -> Result<(), String> {
                     keycode: Some(Keycode::Escape),
                     ..
                 } => {
+                    user_break = true;
                     break 'render;
                 }
                 Event::KeyDown {
@@ -126,8 +170,8 @@ fn main() -> Result<(), String> {
                         _ => 16,
                     };
 
-                    // Todo dont like this
                     if key <= 15 {
+                        println!("keydown 0x{:x}", key);
                         comp.key_down(key);
                     }
                 }
@@ -158,15 +202,28 @@ fn main() -> Result<(), String> {
                     };
 
                     if key <= 15 {
+                        println!("keyup 0x{:x}", key);
                         comp.key_up(key);
                     }
                 }
                 _ => {}
             }
         }
-        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 30));
-    };
-    
+        if opts.cycle_speed > 0 {
+            ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / opts.cycle_speed));
+        }
+    }
+
+    println!(
+        "{} {} cycles",
+        if user_break {
+            "Stopped after"
+        } else {
+            "Completed in"
+        },
+        comp.cycles
+    );
+
     Ok(())
 }
 
