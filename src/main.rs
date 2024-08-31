@@ -4,10 +4,10 @@ use std::u32;
 use chip8::{Chip8, StepMode};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
-use sdl2::pixels::{Color, PixelFormatEnum};
+use sdl2::pixels::PixelFormatEnum;
 use sdl2::rect::Rect;
 use sdl2::render::{Texture, TextureCreator};
-use sdl2::video::{Window, WindowContext};
+use sdl2::video::WindowContext;
 
 struct Opts {
     mode: StepMode,
@@ -97,9 +97,6 @@ fn main() -> Result<(), String> {
     let fg = create_colored_rect(&creator, opts.fg, tex_h, tex_w)?;
     let mut render_rect = Rect::new(1, 1, tex_w as u32, tex_h as u32);
 
-    // canvas.set_draw_color(Color::RGB(0, 0, 0));
-    // canvas.present();
-
     let mut comp = Chip8::new().with_mode(opts.mode);
     let prog = std::fs::read(opts.file).map_err(|e| e.to_string())?;
     comp.load(&prog)?;
@@ -185,7 +182,7 @@ fn main() -> Result<(), String> {
     Ok(())
 }
 
-fn debug_render(gfx: &[u8]) {
+fn _debug_render(gfx: &[u8]) {
     for y in 0..32 {
         for x in 0..64 {
             if gfx[x + y * 64] > 0 {
