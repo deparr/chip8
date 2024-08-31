@@ -218,6 +218,7 @@ impl Chip8 {
             println!("cycles: 0x{:08x}", self.cycles);
             // println!("keys: 0x{:04x}", self.keys);
         }
+
         match opcode {
             NativeCall(addr) => {
                 self.mem[self.cpu.sp] = (next_pc & 0xf) as u8;
@@ -235,17 +236,19 @@ impl Chip8 {
                 self.cpu.sp -= 2;
                 next_pc = self.mem[self.cpu.sp] as Addr;
                 next_pc = next_pc << 8 | self.mem[self.cpu.sp + 1] as Addr;
+                // println!("retting to 0x{:04x}", next_pc);
             }
             Jmp(addr) => {
                 next_pc = addr as Addr;
             }
             Call(addr) => {
                 self.mem[self.cpu.sp] = (next_pc >> 8) as u8;
-                self.mem[self.cpu.sp + 1] = (next_pc & 0xf) as u8;
+                self.mem[self.cpu.sp + 1] = (next_pc & 0xff) as u8;
                 self.cpu.sp += 2;
                 // next_pc = (self.mem[addr + 1] as Addr) << 8 | self.mem[addr] as Addr;
                 // next_pc = (self.mem[addr] as Addr) << 8 | (self.mem[addr + 1] as Addr)
                 next_pc = addr;
+                // println!("calling to 0x{:04x}", next_pc);
             }
             ImEq(reg, val) => {
                 skip = self.cpu.regs[reg] == val;
