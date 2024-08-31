@@ -490,4 +490,14 @@ impl Chip8 {
     pub fn key_up(&mut self, key: usize) {
         self.keys &= !(1 << key);
     }
+
+    pub fn dec_timers(&mut self) {
+        if self.delay_timer > 0 {
+            self.delay_timer -= 1;
+        }
+
+        if self.sound_timer > 0 {
+            self.sound_timer -= 1;
+        }
+    }
 }

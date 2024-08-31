@@ -9,7 +9,7 @@ use sdl2::rect::Rect;
 struct Opts {
     mode: StepMode,
     file: String,
-    cycle_speed: u32,
+    tickrate: u32,
 }
 
 fn parse_cl() -> Result<Opts, String> {
@@ -33,19 +33,19 @@ fn parse_cl() -> Result<Opts, String> {
         None => return Err("Missing required option filename".into()),
     };
 
-    let cycle_speed = match args.iter().position(|e| e == "-t" || e == "--time") {
+    let tickrate = match args.iter().position(|e| e == "-t" || e == "--time") {
         Some(idx) => match args.get(idx + 1) {
             Some(val) => val.parse::<u32>().map_err(|e| e.to_string())?,
             None => return Err("Found --time option, but no time value".into()),
         },
-        None => 0,
+        None => 20,
     };
 
     let file = file.to_owned();
     Ok(Opts {
         mode,
         file,
-        cycle_speed,
+        tickrate,
     })
 }
 
@@ -107,12 +107,22 @@ fn main() -> Result<(), String> {
     let mut event_pump = sdl_context.event_pump()?;
     let mut user_break = false;
     'render: while comp.running {
-        match comp.step() {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(format!("emu step fail: {} on cc {}", e, comp.cycles));
+        let mut i = 0;
+        while i < opts.tickrate {
+            if comp.draw {
+                i = opts.tickrate;
             }
+            match comp.step() {
+                Ok(_) => {}
+                Err(e) => {
+                    return Err(format!("emu step fail: {} on cc {}", e, comp.cycles));
+                }
+            }
+
+            i += 1;
         }
+
+        comp.dec_timers();
 
         if comp.draw {
             for i in 0..comp.gfx.len() {
@@ -147,71 +157,19 @@ fn main() -> Result<(), String> {
                     repeat: false,
                     ..
                 } => {
-                    let key = match key {
-                        Keycode::Num1 => 0x1,
-                        Keycode::Num2 => 0x2,
-                        Keycode::Num3 => 0x3,
-                        Keycode::Num4 => 0xc,
-
-                        Keycode::Q => 0x4,
-                        Keycode::W => 0x5,
-                        Keycode::E => 0x6,
-                        Keycode::R => 0xd,
-
-                        Keycode::A => 0x7,
-                        Keycode::S => 0x8,
-                        Keycode::D => 0x9,
-                        Keycode::F => 0xe,
-
-                        Keycode::Z => 0xa,
-                        Keycode::X => 0x0,
-                        Keycode::C => 0xb,
-                        Keycode::V => 0xf,
-                        _ => 16,
-                    };
-
-                    if key <= 15 {
-                        println!("keydown 0x{:x}", key);
-                        comp.key_down(key);
-                    }
+                    handle_key(&mut comp, key, false);
                 }
                 Event::KeyUp {
                     keycode: Some(key), ..
                 } => {
-                    let key = match key {
-                        Keycode::Num1 => 0x1,
-                        Keycode::Num2 => 0x2,
-                        Keycode::Num3 => 0x3,
-                        Keycode::Num4 => 0xc,
-
-                        Keycode::Q => 0x4,
-                        Keycode::W => 0x5,
-                        Keycode::E => 0x6,
-                        Keycode::R => 0xd,
-
-                        Keycode::A => 0x7,
-                        Keycode::S => 0x8,
-                        Keycode::D => 0x9,
-                        Keycode::F => 0xe,
-
-                        Keycode::Z => 0xa,
-                        Keycode::X => 0x0,
-                        Keycode::C => 0xb,
-                        Keycode::V => 0xf,
-                        _ => 16,
-                    };
-
-                    if key <= 15 {
-                        println!("keyup 0x{:x}", key);
-                        comp.key_up(key);
-                    }
+                    handle_key(&mut comp, key, true);
                 }
                 _ => {}
             }
         }
-        if opts.cycle_speed > 0 {
-            ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / opts.cycle_speed));
-        }
+
+        // naively target 60 fps
+        ::std::thread::sleep(Duration::new(0, 1_000_000_000u32 / 60));
     }
 
     println!(
@@ -239,4 +197,40 @@ fn debug_render(gfx: &[u8]) {
         println!();
     }
     println!();
+}
+
+// TODO still don't like this but better
+fn handle_key(comp: &mut Chip8, key: Keycode, keyup: bool) {
+    let key = match key {
+        Keycode::Num1 => 0x1,
+        Keycode::Num2 => 0x2,
+        Keycode::Num3 => 0x3,
+        Keycode::Num4 => 0xc,
+
+        Keycode::Q => 0x4,
+        Keycode::W => 0x5,
+        Keycode::E => 0x6,
+        Keycode::R => 0xd,
+
+        Keycode::A => 0x7,
+        Keycode::S => 0x8,
+        Keycode::D => 0x9,
+        Keycode::F => 0xe,
+
+        Keycode::Z => 0xa,
+        Keycode::X => 0x0,
+        Keycode::C => 0xb,
+        Keycode::V => 0xf,
+        _ => 16,
+    };
+
+    if key > 15 {
+        return;
+    }
+
+    if keyup {
+        comp.key_up(key)
+    } else {
+        comp.key_down(key)
+    }
 }
