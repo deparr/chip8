@@ -44,17 +44,17 @@ pub struct Cpu {
 
 impl Cpu {
     fn new() -> Self {
-        return Cpu {
+        Cpu {
             regs: vec![0; 16],
             i: 0,
             pc: PROG_OFFSET,
             sp: INT_OFFSET,
-        };
+        }
     }
 }
 
 #[derive(Debug)]
-enum OpCode {
+pub enum OpCode {
     NativeCall(Addr),       // 0NNN
     DispClear,              // 00E0
     Ret,                    // 00EE
@@ -206,7 +206,7 @@ impl Chip8 {
             _ => return Err(format!("An opcode byte was None at 0x{:04x}", pc)),
         };
 
-        let opcode = self.decode(opcode_num);
+        let opcode = Chip8::decode(opcode_num);
         let mut skip = false;
         let mut next_pc = pc + 2;
         use OpCode::*;
@@ -320,7 +320,8 @@ impl Chip8 {
                     let pixel = self.mem[self.cpu.i + y as usize];
                     for x in 0..8 {
                         if pixel & (0x80 >> x) != 0 {
-                            let idx = vx + x + (y + vy) * 64;
+                            // todo: this isn't quite right 
+                            let idx = (vx + x + (y + vy) * 64) % self.gfx.len();
                             if self.gfx[idx] == 1 {
                                 self.cpu.regs[0xf] = 1;
                             }
@@ -364,13 +365,15 @@ impl Chip8 {
                 self.cpu.i += self.cpu.regs[vx] as Addr;
             }
             SpriteAddr(vx) => {
-                self.cpu.i = (self.cpu.regs[vx] * 5) as Addr;
+                // todo this doesnt seem right
+                self.cpu.i = self.cpu.regs[vx] as Addr * 5
             }
             BCD(vx) => {
                 let vx = self.cpu.regs[vx];
                 let h = vx / 100;
-                let t = (vx % 100) / 10;
+                let t = vx / 10;
                 let o = vx % 10;
+                println!("bcd debug: {}{}{}", h, t, o);
 
                 self.mem[self.cpu.i] = h;
                 self.mem[self.cpu.i + 1] = t;
@@ -414,7 +417,6 @@ impl Chip8 {
 
         if self.sound_timer > 0 {
             if self.sound_timer == 1 {
-                println!("TODO: BEEP");
             }
 
             self.sound_timer -= 1;
@@ -423,7 +425,7 @@ impl Chip8 {
         Ok(())
     }
 
-    fn decode(&self, opcode: u16) -> OpCode {
+    pub fn decode(opcode: u16) -> OpCode {
         use OpCode::*;
         let icode = opcode >> 12;
         let ifun = opcode & 0x0f;
